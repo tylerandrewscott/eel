@@ -1,12 +1,11 @@
-library(tidyverse)
-library(statnet)
-library(tidyselect)
-library(ggnetwork)
-library(ggthemes)
-library(parallel)
 
-library(multinet)
+#setwd('~/Documents/Github/eel')
+#system('ln -s ~/Box/eel/input/ ~/Documents/GitHub/eel')
+#system('ln -s ~/Box/eel/output/ ~/Documents/GitHub/eel')
 
+pgks = c('tidyverse','statnet','tidyselect','ggnetwork','ggthemes','parallel','multinet')
+lapply(pgks[!pgks %in% installed.packages()[,'Package']],install.packages)
+lapply(pgks,require,character.only = FALSE)
 
 set = 1:14
 cores = 2
