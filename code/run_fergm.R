@@ -3,56 +3,30 @@
 #system('ln -s ~/Box/eel/input/ ~/Documents/GitHub/eel')
 #system('ln -s ~/Box/eel/output/ ~/Documents/GitHub/eel')
 
-pgks = c('tidyverse','statnet','tidyselect','ggnetwork','ggthemes','parallel','multinet','dplyr')
+pgks = c('tidyverse','statnet','tidyselect','ggnetwork','ggthemes','fergm','data.table','magrittr')
 lapply(pgks[!pgks %in% installed.packages()[,'Package']],install.packages)
-lapply(pgks,require,character.only = T)
-
-set = 1:14
-cores = 2
-seed = 24
-n_sims = 1000
-cd_max = 100
-mc_max = 40
-burn = 5000
-interval = 1000
-samplesize = 5000
-#library(devtools)
-#install_github('statnet/ergm')
-
-run_collab = TRUE
-run_tech = TRUE
-run_both = TRUE
-sim_collab = FALSE
-sim_tech = FALSE
-results = FALSE
+lapply(pgks,require,character.only = TRUE)
 
 sheet_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTg6ChPQBBftPdUB-IFq4OQGFyDruWwBBDyJpPmcPSiSOV1Y_bEx2XeF_wR6vkq-rY4TW2-ZAMP4alN/pub?gid=456743467&single=true&output=csv"
-#nms_url = 'input/National Marine Sanctuaries Data.csv'
-#Q5 - who are you
-#R05 AW1-13, AW35-36
-#R05 SO24-34 are nms staff
-#ASOWs are drops
-df = read_csv(sheet_url)
+df = fread(sheet_url)
 df2 = df
 df <- df[!is.na(df$`Record ID`),]
-df$ID = df$`Record ID`
-df$Network <- df$`R02 ASW`
+setnames(df,c('Role',"R02 ASW","Record ID"),c('Level','Network',"ID"))
 df <- df[df$Network>0&df$Network<15,]
-df <- df[,!names(df) %in% c('R25 1 ASOW','R25 2 ASOW','R27 1 ASOW','R27 2 ASOW')]
-df <- df[df$ID %in% df$ID[!sapply(df$ID,function(x) all((gather(df[df$ID==x,grepl('25|26|27',names(df))]))$value %in% c(-2,-5)))],]
-df = df %>% rename(Level = Role)
+df <- df[,!names(df) %in% c('R25 1 ASOW','R25 2 ASOW','R27 1 ASOW','R27 2 ASOW'),with = F]
+df <- df[df$ID %in% df$ID[!sapply(df$ID,function(x) all(melt(df[df$ID==x,grepl('R25|R26|R27',names(df)),with = F])$value %in% c(-2,-5)))],]
 
 role_vectors <- paste0('R05 AW ',c(1:23,35,36))
 nms_role_vectors <- paste0('R05 SO ',c(24:30,32:34))
 role_url = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vShimT8Fb2xCUXjoOaHBCCOaj3UgtHNK5jufXBeltwqnBpqrGd_5aABGQcRAc-kmXOA14LVnpZi1lba/pub?output=csv'
 #roles_url = 'input/Roles_Code_Cleaned.csv'
-roles_df <- read_csv(role_url)
+roles_df <- fread(role_url)
 
-id_roles = gather(df[,c('ID','Network','Level',role_vectors,nms_role_vectors)],Role,Response,-ID,-Network,-Level)
 
+id_roles = melt(df[,c('ID','Network','Level',role_vectors,nms_role_vectors),with = F],id.vars = c('ID','Network','Level'),value.name ='Response',variable.name = 'Role' )
 id_roles <- id_roles[!grepl('Other ONMS staff',id_roles$Role),]
 id_roles = id_roles[id_roles$Response>0,]
-id_roles = id_roles %>% select(-Response)
+id_roles[,Response:=NULL]
 id_roles$Role_ID <- paste(id_roles$ID,id_roles$Role,sep='_')
 id_roles$Self_Role_Name <- roles_df$Role_Name[match(id_roles$Role,roles_df$Role)]
 #questions about alters
@@ -60,30 +34,33 @@ id_roles$Self_Role_Name <- roles_df$Role_Name[match(id_roles$Role,roles_df$Role)
 #Q26 - which gov folks do you communicate with: R26‐ASOW.1 - R26‐ASOW.10
 #Q27 - which non-gov folks do you communicate with: R27‐ASOW.1 - R27‐ASOW.16
 
+role_count = id_roles[,.N,by=.(Network,Self_Role_Name)]
+setnames(role_count,'N','role_count')
 
-role_count = id_roles %>% group_by(Network,Self_Role_Name) %>% summarise(role_count = n())
-
-actor_details <- data.frame(ID = df$ID,Actor_Type =ifelse(df$`R01 ASW`%in%c(1,2),'Advisory Council',ifelse(df$`R01 ASW`%in%c(5,6),'Staff Member','Working Group')),
+actor_details <- data.table(ID = df$ID,Actor_Type =ifelse(df$`R01 ASW`%in%c(1,2),'Advisory Council',ifelse(df$`R01 ASW`%in%c(5,6),'Staff Member','Working Group')),
                             Time_Involved = df$`R03 ASOW`,Network = df$Network)
-alters_df = Reduce(function(u,v) merge(u,v,all=TRUE),list(gather(df[,c('ID','Network',grep('R25',names(df),value=T))],Alter_Role,Response,-ID,-Network),
-                                                          gather(df[,c('ID','Network',grep('R26',names(df),value=T))],Alter_Role,Response,-ID,-Network),
-                                                          gather(df[,c('ID','Network',grep('R27',names(df),value=T))],Alter_Role,Response,-ID,-Network)))
+
+
+alters_df = Reduce(function(u,v) merge(u,v,all=TRUE),list(gather(df[,c('ID','Network',grep('R25',names(df),value=T)),with = F],Alter_Role,Response,-ID,-Network),
+                                                          gather(df[,c('ID','Network',grep('R26',names(df),value=T)),with = F],Alter_Role,Response,-ID,-Network),
+                                                          gather(df[,c('ID','Network',grep('R27',names(df),value=T)),with = F],Alter_Role,Response,-ID,-Network)))
+alters_df  = data.table(alters_df )
 alters_df$Response[alters_df$Response==-1] <- 0
-did_not_complete = alters_df %>% group_by(ID) %>% summarise(no_see = all(Response<0)) %>% filter(no_see) %>% .$ID
+did_not_complete = alters_df[,all(Response<0),by=.(ID)][V1==TRUE,]$ID
+
 df = df[!df$ID %in% did_not_complete,]
 id_roles = id_roles[!id_roles$ID %in% did_not_complete,]
 
-dyad_df <- full_join(actor_details,alters_df)
+dyad_df <- merge(actor_details,alters_df)
 dyad_df$Alter_Role_Name <- as.factor(roles_df$Role_Name[match(dyad_df$Alter_Role,roles_df$Role)])
 #dyad_df$ID = as.factor(dyad_df$ID)
 dyad_df = dyad_df[dyad_df$Network<=14,]
 
 dyad_df$Network = as.factor(dyad_df$Network)
 dyad_df = dyad_df[dyad_df$Response %in% c(1:3),]
-
 id_roles$Network = as.factor(id_roles$Network)
-dyad_expansion_df = full_join(dyad_df,id_roles)
 
+dyad_expansion_df = merge(dyad_df,id_roles,all = T,allow.cartesian = T,by = c('ID','Network'))
 dyad_expansion_df$Self_Role_Name = as.factor(dyad_expansion_df$Self_Role_Name)
 dyad_expansion_df$Self_Role_Name = fct_expand(dyad_expansion_df$Self_Role_Name,union(levels(dyad_expansion_df$Self_Role_Name),levels(dyad_expansion_df$Alter_Role_Name)))
 dyad_expansion_df$Alter_Role_Name = fct_expand(dyad_expansion_df$Alter_Role_Name,union(levels(dyad_expansion_df$Self_Role_Name),levels(dyad_expansion_df$Alter_Role_Name)))
@@ -93,9 +70,10 @@ tdf = tdf[!is.na(tdf$ID),]
 tdf$Self_Role_Name = as.character(tdf$Self_Role_Name)
 tdf$Level[is.na(tdf$Level)&tdf$Actor_Type=='Advisory Council'] <- 'A'
 
+set = 1:14
+
 testn = lapply(1:14,function(n) {
 print(n)
-  n = 1
 temp_df = tdf %>% filter(Network==n)
 temp_df$Alter_ID = id_roles$ID[id_roles$Network==n][match(temp_df$Alter_Role_Name,id_roles$Self_Role_Name[id_roles$Network==n])]
 #temp_df = temp_df[!is.na(temp_df$Alter_ID),]
@@ -116,6 +94,94 @@ print(nrow(isols)/(nrow(edges)+nrow(isols)))
 #isols <- isols[!isols$temp_df.ID %in% edges$temp_df.ID,]
 add.edges.ml(mnet,edges)
 mnet})
+
+n = 1
+temp_net = tdf[Network==n]
+temp_net$Alter_ID = id_roles$ID[id_roles$Network==n][match(temp_net$Alter_Role_Name,id_roles$Self_Role_Name[id_roles$Network==n])]
+
+
+net = network::network.initialize(n = length(unique(temp_net$ID)),directed = T,bipartite = F)
+net %v% 'vertex.names' <- sort(unique(temp_net$ID))
+cnet = net
+inet = net
+network::add.edges(x = cnet,tail =match(temp_net[!is.na(Alter_ID)&Response%in%c(1,3),]$ID,network.vertex.names(net)),head = match(temp_net[!is.na(Alter_ID)&Response%in%c(1,3),]$Alter_ID,network.vertex.names(net)))
+network::add.edges(x = inet,tail =match(temp_net[!is.na(Alter_ID)&Response%in%c(2,3),]$ID,network.vertex.names(net)),head = match(temp_net[!is.na(Alter_ID)&Response%in%c(2,3),]$Alter_ID,network.vertex.names(net)))
+
+#devtools::install_github("tedhchen/multilayer.ergm")
+library(multilayer.ergm)
+mnet <- to.multiplex(inet,cnet, output = "network",directed = T)
+mod.within <- ergm(mnet ~ edges_layer(layer = 1) + 
+                     #gwesp_layer(0,fixed = T,layer = 1) +
+                     edges_layer(layer = 2) + 
+                     #gwesp_layer(0,fixed = T,layer = 2) + 
+                     mutual("layer.mem", diff = T) +
+                     duplexdyad(c("e", "f"), layers = list(1, 2)),
+                    eval.loglik = F,
+                   control = control.ergm(parallel=4,MCMC.samplesize = 1e3))
+
+
+
+test = fergm(mnet,form = "edges + gwesp(0,fixed = T) + gwdegree(0,fixed = T)",seed = 24,warmup = 1e3,chains = 4,iter = 1e4,cores = 4)
+
+
+
+
+summary(mod.within)
+
+
+summary(mod.within)
+                   mutual("layer.mem", diff = T),
+                   control = control.ergm(seed = 24),
+                   constraints = ~fixallbut(free))
+
+summary(mod.within)
+
+mnet %v% 'layer.mem'
+
+test
+summary(test)
+mnet
+add.edge.network(net,tail = temp_net$ID[!is.na(temp_net$Alter_ID)],head = temp_net$Alter_ID[!is.na(temp_net$Alter_ID)])
+
+
+
+
+temp_net[!duplicated(ID)]
+
+table(df2$`R02 ASW`)
+temp_net$ID
+
+unique(tdf$ID[tdf$Network==1])
+
+
+
+df2$`Record ID`[df2$`R02 2 ASOW 1`==1]
+unique(temp_net$ID)
+names(df2)
+df2$`R02 ASW`
+
+
+df2$`R02 1 ASOW`
+test = df2[df2$`Record ID`=="A035",grepl('^R02',names(df2)),with = F]
+test
+
+intersect(length(unique(temp_net$ID)),unique(test$`Record ID`))
+
+
+unique()
+
+
+test[`Record ID`=='A112',grepl('R2[5-7]',colnames(test)), with]
+test$`Record ID`
+unique(temp_net$ID)
+
+dim(test)
+
+temp_net[is.na(Alter_ID)]
+
+plot(testn[[1]])
+
+fergm(net = )
 
 
 plot(testn[[8]])
